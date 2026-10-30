@@ -1,0 +1,223 @@
+"""SQLAlchemy models.
+
+Conventions:
+- money: integer paise (`*_paise` columns)
+- timestamps: naive UTC; business dates (invoice/due/receipt): plain DATE in IST
+- fields synced from the accounting system are overwritten on every sync;
+  Revert-owned fields (tone, paused, language) are never touched by sync.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from revert.core.timeutil import utcnow
+
+TONES = ("gentle", "standard", "firm")
+LANGUAGES = ("en", "hi", "kn")
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    address: Mapped[str] = mapped_column(String(500), default="")
+    gstin: Mapped[str] = mapped_column(String(20), default="")
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    buyers: Mapped[list[Buyer]] = relationship(back_populates="company")
+
+
+class Buyer(Base):
+    """A customer ledger (Sundry Debtor in Tally)."""
+
+    __tablename__ = "buyers"
+    __table_args__ = (UniqueConstraint("company_id", "ledger_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    # synced
+    ledger_name: Mapped[str] = mapped_column(String(200))
+    address: Mapped[str] = mapped_column(String(500), default="")
+    email: Mapped[str] = mapped_column(String(200), default="")
+    credit_limit_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    credit_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    closing_balance_paise: Mapped[int] = mapped_column(Integer, default=0)  # receivable, Dr positive
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Revert-owned
+    tone: Mapped[str] = mapped_column(String(10), default="standard")
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    language: Mapped[str] = mapped_column(String(5), default="en")
+
+    company: Mapped[Company] = relationship(back_populates="buyers")
+    phones: Mapped[list[BuyerPhone]] = relationship(
+        back_populates="buyer", cascade="all, delete-orphan"
+    )
+    invoices: Mapped[list[Invoice]] = relationship(back_populates="buyer")
+    receipts: Mapped[list[Receipt]] = relationship(back_populates="buyer")
+
+    @property
+    def primary_phone(self) -> str | None:
+        for p in self.phones:
+            if p.is_primary:
+                return p.phone
+        return self.phones[0].phone if self.phones else None
+
+
+class BuyerPhone(Base):
+    """The ONLY numbers Revert may message for a buyer."""
+
+    __tablename__ = "buyer_phones"
+    __table_args__ = (UniqueConstraint("buyer_id", "phone"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    buyer_id: Mapped[int] = mapped_column(ForeignKey("buyers.id"))
+    phone: Mapped[str] = mapped_column(String(20), index=True)  # E.164
+    source: Mapped[str] = mapped_column(String(10), default="tally")  # tally | manual
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    buyer: Mapped[Buyer] = relationship(back_populates="phones")
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+    __table_args__ = (UniqueConstraint("company_id", "number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    buyer_id: Mapped[int] = mapped_column(ForeignKey("buyers.id"), index=True)
+    number: Mapped[str] = mapped_column(String(50))
+    date: Mapped[date] = mapped_column(Date)
+    due_date: Mapped[date] = mapped_column(Date)
+    subtotal_paise: Mapped[int] = mapped_column(Integer, default=0)
+    tax_paise: Mapped[int] = mapped_column(Integer, default=0)
+    total_paise: Mapped[int] = mapped_column(Integer)
+    balance_paise: Mapped[int] = mapped_column(Integer)  # pending, from bill-wise outstanding
+    narration: Mapped[str] = mapped_column(Text, default="")
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    buyer: Mapped[Buyer] = relationship(back_populates="invoices")
+    lines: Mapped[list[InvoiceLine]] = relationship(
+        back_populates="invoice", cascade="all, delete-orphan"
+    )
+
+    @property
+    def paid_paise(self) -> int:
+        return self.total_paise - self.balance_paise
+
+    @property
+    def status(self) -> str:
+        if self.balance_paise <= 0:
+            return "paid"
+        if self.balance_paise < self.total_paise:
+            return "part_paid"
+        return "unpaid"
+
+
+class InvoiceLine(Base):
+    __tablename__ = "invoice_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"))
+    item_name: Mapped[str] = mapped_column(String(200))
+    qty: Mapped[float] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String(20), default="")
+    rate_paise: Mapped[int] = mapped_column(Integer)
+    amount_paise: Mapped[int] = mapped_column(Integer)
+
+    invoice: Mapped[Invoice] = relationship(back_populates="lines")
+
+
+class Receipt(Base):
+    __tablename__ = "receipts"
+    __table_args__ = (UniqueConstraint("company_id", "voucher_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    buyer_id: Mapped[int] = mapped_column(ForeignKey("buyers.id"), index=True)
+    voucher_number: Mapped[str] = mapped_column(String(50))
+    date: Mapped[date] = mapped_column(Date)
+    amount_paise: Mapped[int] = mapped_column(Integer)
+    narration: Mapped[str] = mapped_column(Text, default="")  # often carries UTR
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    buyer: Mapped[Buyer] = relationship(back_populates="receipts")
+    allocations: Mapped[list[ReceiptAllocation]] = relationship(
+        back_populates="receipt", cascade="all, delete-orphan"
+    )
+
+
+class ReceiptAllocation(Base):
+    __tablename__ = "receipt_allocations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    receipt_id: Mapped[int] = mapped_column(ForeignKey("receipts.id"))
+    invoice_number: Mapped[str] = mapped_column(String(50), index=True)
+    amount_paise: Mapped[int] = mapped_column(Integer)
+
+    receipt: Mapped[Receipt] = relationship(back_populates="allocations")
+
+
+class StockItem(Base):
+    __tablename__ = "stock_items"
+    __table_args__ = (UniqueConstraint("company_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    group: Mapped[str] = mapped_column(String(100), default="")
+    unit: Mapped[str] = mapped_column(String(20), default="")
+    qty: Mapped[float] = mapped_column(Float, default=0)
+    rate_paise: Mapped[int] = mapped_column(Integer, default=0)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SyncRun(Base):
+    __tablename__ = "sync_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True)
+    source: Mapped[str] = mapped_column(String(30))
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="running")  # running | ok | failed
+    error: Mapped[str] = mapped_column(Text, default="")
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class MessageLog(Base):
+    """Every inbound/outbound message. `outcome` seeds the future learning engine."""
+
+    __tablename__ = "message_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    buyer_id: Mapped[int | None] = mapped_column(ForeignKey("buyers.id"), nullable=True, index=True)
+    channel: Mapped[str] = mapped_column(String(20))  # web_simulator | whatsapp
+    direction: Mapped[str] = mapped_column(String(3))  # in | out
+    phone: Mapped[str] = mapped_column(String(20), default="")
+    body: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str] = mapped_column(String(40), default="")
+    action: Mapped[str] = mapped_column(String(80), default="")
+    outcome: Mapped[str] = mapped_column(String(80), default="")
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
