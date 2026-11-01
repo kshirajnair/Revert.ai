@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ company.name }} · Revert{% endblock %}
+{% block content %}
+<div class="headline">
+  <div>
+    <h1>{{ company.name }}</h1>
+    <p class="muted">Data from Tally, last synced {{ company.last_synced_at | ist }}</p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/actions/sync"><button>Sync now</button></form>
+    <form method="post" action="/actions/remind" class="remind">
+      <button>Run reminders</button>
+      <details>
+        <summary>as if at…</summary>
+        <input type="datetime-local" name="at" aria-label="Run as if at this IST time">
+        <small>Demo only: pretend it is this time (IST). Leave empty for now.</small>
+      </details>
+    </form>
+  </div>
+</div>
+
+{% if quiet_now %}
+<p class="note">Quiet hours now ({{ "%02d" % policy.quiet_start_hour }}:00–{{ "%02d" % policy.quiet_end_hour }}:00 IST). Reminders wait until morning.</p>
+{% endif %}
+
+<section class="stats">
+  <div class="stat"><span>Overdue</span><strong>{{ total_overdue | inr }}</strong><small>{{ rows | length }} buyers</small></div>
+  <div class="stat"><span>Recovered this month</span><strong>{{ month.recovered_paise | inr }}</strong><small>paid after a Revert reminder</small></div>
+  <div class="stat"><span>Collected this month</span><strong>{{ month.collected_paise | inr }}</strong><small>all receipts</small></div>
+  <div class="stat {% if needs %}alert{% endif %}"><span>Needs you</span><strong>{{ needs | length }}</strong><small>messages handed to you</small></div>
+</section>
+
+{% if needs %}
+<section class="card">
+  <h2>Needs you</h2>
+  <ul class="list">
+    {% for m in needs %}
+    <li>
+      <div>
+        <a href="/buyers/{{ m.buyer_id }}" target="_top"><strong>{{ m.buyer.ledger_name if m.buyer else m.phone }}</strong></a>
+        <span>“{{ m.body[:140] }}”</span>
+        <small class="muted">{{ m.created_at | ist_short }}</small>
+      </div>
+      <div class="row-actions">
+        <a class="btn" href="/buyers/{{ m.buyer_id }}" target="_top">Reply</a>
+        <form method="post" action="/messages/{{ m.id }}/handled"><button class="ghost">Done</button></form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Overdue, most days late first</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Buyer</th><th class="num">Overdue</th><th class="num">Days late</th><th>Last reminder</th><th>Tone</th><th>Reminders</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="/buyers/{{ r.buyer.id }}" target="_top">{{ r.buyer.ledger_name }}</a></td>
+        <td class="num">{{ r.ageing.total_overdue_paise | inr }}</td>
+        <td class="num"><span class="pill {% if r.ageing.oldest_days_overdue > 60 %}bad{% elif r.ageing.oldest_days_overdue > 30 %}warn{% endif %}">{{ r.ageing.oldest_days_overdue }}</span></td>
+        <td class="muted">{{ r.last_reminder_at | ist_short }}</td>
+        <td>
+          <select name="tone" hx-post="/buyers/{{ r.buyer.id }}/tone" hx-trigger="change" hx-target="next .status" aria-label="Tone for {{ r.buyer.ledger_name }}">
+            {% for t in tones %}<option value="{{ t }}" {% if r.buyer.tone == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+          </select>
+          <span class="status"></span>
+        </td>
+        <td>
+          <label class="switch">
+            <input type="checkbox" name="paused" {% if r.buyer.paused %}checked{% endif %}
+                   hx-post="/buyers/{{ r.buyer.id }}/pause" hx-trigger="change" hx-target="next .status">
+            Pause
+          </label>
+          <span class="status"></span>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">Nothing overdue.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Conversations</h2>
+  <ul class="list">
+    {% for b, m in convos %}
+    <li>
+      <div>
+        <a href="/buyers/{{ b.id }}" target="_top"><strong>{{ b.ledger_name }}</strong></a>
+        <small class="muted">{{ m.created_at | ist_short }} · {{ "Dealer" if m.direction == "in" else ("You" if m.action == "owner_reply" else "Revert") }}: {{ m.body.splitlines()[0][:90] }}</small>
+      </div>
+      <span class="tag">{{ m.intent or "-" }}</span>
+    </li>
+    {% else %}
+    <li class="muted">No messages yet. Run reminders, or chat as a dealer in the simulator.</li>
+    {% endfor %}
+  </ul>
+</section>
+<p class="muted small">Promises to pay and disputes appear here once the AI agent lands in Phase 3.</p>
+{% endblock %}

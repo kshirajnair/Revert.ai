@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}{{ buyer.ledger_name }} · Revert{% endblock %}
+{% block content %}
+<p><a href="/">← Dashboard</a></p>
+<div class="headline">
+  <div>
+    <h1>{{ buyer.ledger_name }}</h1>
+    <p class="muted">{{ buyer.phones | map(attribute="phone") | join(", ") or "No phone on file" }} · language {{ buyer.language }} · credit {{ buyer.credit_days or 0 }} days</p>
+  </div>
+  <div class="actions">
+    <label>Tone
+      <select name="tone" hx-post="/buyers/{{ buyer.id }}/tone" hx-trigger="change" hx-target="#tone-status">
+        {% for t in tones %}<option value="{{ t }}" {% if buyer.tone == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+    <span id="tone-status" class="status"></span>
+    <label class="switch">
+      <input type="checkbox" name="paused" {% if buyer.paused %}checked{% endif %}
+             hx-post="/buyers/{{ buyer.id }}/pause" hx-trigger="change" hx-target="#pause-status"> Pause reminders
+    </label>
+    <span id="pause-status" class="status"></span>
+  </div>
+</div>
+
+<section class="stats">
+  <div class="stat"><span>Outstanding</span><strong>{{ ageing.total_outstanding_paise | inr }}</strong></div>
+  <div class="stat"><span>Overdue</span><strong>{{ ageing.total_overdue_paise | inr }}</strong></div>
+  <div class="stat"><span>Oldest</span><strong>{{ ageing.oldest_days_overdue if ageing.oldest_days_overdue > 0 else 0 }} days late</strong></div>
+</section>
+
+<section class="card">
+  <h2>Open invoices</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th class="num">Total</th><th class="num">Pending</th><th class="num">Days late</th></tr></thead>
+    <tbody>
+    {% for i in ageing.invoices %}
+      <tr><td>{{ i.number }}</td><td>{{ i.date.strftime("%d %b %Y") }}</td><td>{{ i.due_date.strftime("%d %b") }}</td>
+          <td class="num">{{ i.total_paise | inr_exact }}</td><td class="num">{{ i.balance_paise | inr_exact }}</td>
+          <td class="num">{{ i.days_overdue if i.days_overdue >= 0 else "not due" }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">Nothing outstanding.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Conversation</h2>
+  <div class="log">
+    {% for m in messages %}
+    <div class="logline {{ m.direction }}">
+      <div class="who">{{ "Dealer" if m.direction == "in" else ("You" if m.action == "owner_reply" else "Revert") }} · {{ m.created_at | ist_short }}</div>
+      <div class="body">{{ m.body }}</div>
+      <div class="meta">intent: {{ m.intent or "-" }} · action: {{ m.action or "-" }} · outcome: {{ m.outcome or "-" }}</div>
+    </div>
+    {% else %}<p class="muted">No messages yet.</p>{% endfor %}
+  </div>
+  <form method="post" action="/buyers/{{ buyer.id }}/reply" class="reply">
+    <input name="text" placeholder="Reply as {{ company.name }}…" autocomplete="off" required aria-label="Your reply">
+    <button>Send</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Reminder history</h2>
+  <ul class="list">
+    {% for r in reminders %}
+    <li><div><strong>{{ r.invoice.number }}</strong> <small class="muted">stage {{ "%+d" % r.stage }} days · {{ r.created_at | ist_short }}</small></div>
+        <span class="tag {% if r.status == 'cancelled' %}ok{% endif %}">{{ r.status }}{% if r.reason %}: {{ r.reason }}{% endif %}</span></li>
+    {% else %}<li class="muted">No reminders yet.</li>{% endfor %}
+  </ul>
+</section>
+{% endblock %}

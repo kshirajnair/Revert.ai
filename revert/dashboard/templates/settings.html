@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Reminder schedule · Revert{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Reminder schedule</h1>
+  <form method="post" action="/settings" class="form">
+    <label class="switch"><input type="checkbox" name="enabled" {% if policy.enabled %}checked{% endif %}> Send reminders automatically</label>
+    <label>Stages (days relative to due date)
+      <input name="offsets" value="{{ policy.offsets | join(', ') }}">
+      <small>-3 = three days before, 0 = on the due date, 7 = a week late.</small>
+    </label>
+    <div class="two">
+      <label>Quiet from (hour, IST)<input type="number" min="0" max="23" name="quiet_start_hour" value="{{ policy.quiet_start_hour }}"></label>
+      <label>Quiet until (hour, IST)<input type="number" min="0" max="23" name="quiet_end_hour" value="{{ policy.quiet_end_hour }}"></label>
+    </div>
+    <label>Most reminders per buyer per week
+      <input type="number" min="1" max="7" name="max_per_week" value="{{ policy.max_per_week }}">
+    </label>
+    <button>Save</button>
+  </form>
+  <p class="muted small">Reminders stop as soon as a payment against the invoice is synced from Tally. Several invoices due for the same buyer go in one message.</p>
+</section>
+{% endblock %}

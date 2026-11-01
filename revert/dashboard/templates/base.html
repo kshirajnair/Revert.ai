@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Revert{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <script>if (window.self !== window.top) document.body.classList.add("embedded");</script>
+  <header class="top">
+    <a class="brand" href="/" target="_top">Revert</a>
+    <nav>
+      <a href="/" target="_top">Dashboard</a>
+      <a href="/simulator" target="_top">Chat simulator</a>
+      <a href="/settings" target="_top">Reminder schedule</a>
+    </nav>
+  </header>
+  <main>
+    {% if msg %}<div class="flash" role="status">{{ msg }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -36,3 +36,8 @@ def format_inr(paise: int, show_paise: bool = False) -> str:
     if show_paise:
         out += f".{rem:02d}"
     return out
+
+
+def format_inr_exact(paise: int) -> str:
+    """Like format_inr, but keeps paise when there are any, so a quoted amount is never rounded."""
+    return format_inr(paise, show_paise=paise % 100 != 0)

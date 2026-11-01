@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from revert.core.models import Base
 
@@ -11,6 +12,8 @@ def make_engine(url: str) -> Engine:
     kwargs = {}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+        if url in ("sqlite://", "sqlite:///:memory:"):
+            kwargs["poolclass"] = StaticPool  # one shared in-memory DB across threads (web tests)
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
 

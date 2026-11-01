@@ -28,6 +28,8 @@ from revert.core.timeutil import utcnow
 
 TONES = ("gentle", "standard", "firm")
 LANGUAGES = ("en", "hi", "kn")
+# Reminder stages, in days relative to the due date: 3 before, on the day, +7, +15, +30.
+DEFAULT_REMINDER_OFFSETS = [-3, 0, 7, 15, 30]
 
 
 class Base(DeclarativeBase):
@@ -210,7 +212,8 @@ class MessageLog(Base):
     __tablename__ = "message_log"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    # null only for inbound messages from numbers we don't know
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), nullable=True)
     buyer_id: Mapped[int | None] = mapped_column(ForeignKey("buyers.id"), nullable=True, index=True)
     channel: Mapped[str] = mapped_column(String(20))  # web_simulator | whatsapp
     direction: Mapped[str] = mapped_column(String(3))  # in | out
@@ -221,3 +224,42 @@ class MessageLog(Base):
     outcome: Mapped[str] = mapped_column(String(80), default="")
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    buyer: Mapped[Buyer | None] = relationship()
+
+
+class ReminderPolicy(Base):
+    """The owner's reminder schedule. One row per company, created with defaults on first use."""
+
+    __tablename__ = "reminder_policies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    offsets: Mapped[list] = mapped_column(JSON, default=lambda: list(DEFAULT_REMINDER_OFFSETS))
+    quiet_start_hour: Mapped[int] = mapped_column(Integer, default=20)  # IST, no messages from here...
+    quiet_end_hour: Mapped[int] = mapped_column(Integer, default=9)  # ...until here
+    max_per_week: Mapped[int] = mapped_column(Integer, default=2)  # per buyer, rolling 7 days
+
+
+class Reminder(Base):
+    """One row per (invoice, stage) that was acted on, so a stage never fires twice.
+
+    status: sent | cancelled (a payment synced before the stage went out)
+    """
+
+    __tablename__ = "reminders"
+    __table_args__ = (UniqueConstraint("invoice_id", "stage"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    buyer_id: Mapped[int] = mapped_column(ForeignKey("buyers.id"), index=True)
+    invoice_id: Mapped[int] = mapped_column(ForeignKey("invoices.id"), index=True)
+    stage: Mapped[int] = mapped_column(Integer)  # days relative to due date
+    status: Mapped[str] = mapped_column(String(10))
+    reason: Mapped[str] = mapped_column(String(80), default="")
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("message_log.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    invoice: Mapped[Invoice] = relationship()
+    buyer: Mapped[Buyer] = relationship()

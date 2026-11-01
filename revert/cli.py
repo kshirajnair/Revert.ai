@@ -5,11 +5,14 @@
     ageing  [--buyer NAME]        print the ageing report
     status                        last sync + row counts
     pay     PARTY AMOUNT [--invoice INV-xxxx]   (mock only) record a payment in mock Tally
+    remind  [--at "YYYY-MM-DD HH:MM"]           run the reminder engine once (optionally as if at an IST time)
+    serve   [--offline] [--no-scheduler]        dashboard + chat simulator on http://127.0.0.1:8000
 """
 from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 
 from sqlalchemy import func, select
 
@@ -19,8 +22,8 @@ from revert.core.ageing import Bucket, ageing_report
 from revert.core.db import init_db, make_engine, make_session_factory
 from revert.core.models import Buyer, Company, Invoice, Receipt, StockItem, SyncRun
 from revert.core.money import format_inr
-from revert.core.sync import run_sync
-from revert.core.timeutil import format_ist, today_ist
+from revert.core.jobs import reminder_job, sync_job
+from revert.core.timeutil import IST, format_ist, today_ist
 
 
 def _session(reset: bool = False):
@@ -40,14 +43,14 @@ def _company(session) -> Company:
 def cmd_sync(args, reset: bool = False) -> int:
     settings = get_settings()
     session = _session(reset=reset)
-    res = run_sync(session, get_connector(settings, offline=args.offline))
+    res = sync_job(session, get_connector(settings, offline=args.offline))
     if not res.ok:
         print(f"Sync FAILED: {res.error}")
         print("Existing data was left untouched.")
         return 1
     print(f"Sync OK: {res.counts}")
     if res.paid_invoices:
-        print(f"Payments received against: {', '.join(res.paid_invoices)}")
+        print(f"Payments received against: {', '.join(res.paid_invoices)} (their reminders are stopped)")
     return 0
 
 
@@ -127,6 +130,32 @@ def cmd_pay(args) -> int:
     return 0
 
 
+def cmd_remind(args) -> int:
+    from revert.channels import get_channel
+
+    session = _session()
+    _company(session)
+    at = datetime.strptime(args.at, "%Y-%m-%d %H:%M").replace(tzinfo=IST) if args.at else None
+    report = reminder_job(session, get_channel(get_settings().channel), at)
+    print(f"Reminder run at {report.at:%d %b %Y %I:%M %p} IST: {report.summary()}")
+    for r in report.results:
+        print(f"  {r.status:<9}{r.buyer:<30}{', '.join(r.invoices)}{'  - ' + r.reason if r.reason else ''}")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    import uvicorn
+
+    from revert.dashboard.app import create_app
+
+    s = get_settings()
+    app = create_app(s, offline=args.offline, scheduler=not args.no_scheduler)
+    print(f"Dashboard:       http://{s.host}:{s.port}/")
+    print(f"Chat simulator:  http://{s.host}:{s.port}/simulator")
+    uvicorn.run(app, host=s.host, port=s.port, log_level="info")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -145,5 +174,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("party")
     p.add_argument("amount", type=float, help="rupees")
     p.add_argument("--invoice")
+    p = sub.add_parser("remind")
+    p.add_argument("--at", help='pretend it is this IST time, e.g. "2026-11-02 10:30" (demo/testing)')
+    p = sub.add_parser("serve")
+    p.add_argument("--offline", action="store_true", help="Sync now serves demo books in-process, no mock server needed")
+    p.add_argument("--no-scheduler", action="store_true", help="don't run sync/reminders in the background")
     args = ap.parse_args(argv)
-    return {"seed": cmd_seed, "sync": cmd_sync, "ageing": cmd_ageing, "status": cmd_status, "pay": cmd_pay}[args.cmd](args)
+    return {"seed": cmd_seed, "sync": cmd_sync, "ageing": cmd_ageing, "status": cmd_status, "pay": cmd_pay,
+            "remind": cmd_remind, "serve": cmd_serve}[args.cmd](args)

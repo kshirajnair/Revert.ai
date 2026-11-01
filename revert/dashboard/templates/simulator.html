@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Chat simulator · Revert{% endblock %}
+{% block body_class %}wide{% endblock %}
+{% block content %}
+<div class="sim">
+  <section class="phone-col">
+    <form method="get" action="/simulator" class="picker">
+      <label>Chat as
+        <select name="buyer_id" onchange="this.form.submit()">
+          {% for b in buyers %}<option value="{{ b.id }}" {% if current and b.id == current.id %}selected{% endif %}>{{ b.ledger_name }}</option>{% endfor %}
+        </select>
+      </label>
+    </form>
+    {% if current %}
+    <div class="phone">
+      <div class="phone-head">
+        <strong>{{ company.name }}</strong>
+        <small>you are {{ current.ledger_name }} · {{ current.primary_phone or "no phone" }}</small>
+      </div>
+      <div id="thread" class="thread" hx-get="/simulator/thread?buyer_id={{ current.id }}" hx-trigger="every 3s" hx-swap="innerHTML">
+        {% include "_thread.html" %}
+      </div>
+      <form class="compose" hx-post="/simulator/send" hx-target="#thread" hx-swap="innerHTML"
+            hx-on::after-request="this.reset()">
+        <input type="hidden" name="buyer_id" value="{{ current.id }}">
+        <input name="text" placeholder="Type a message as the dealer…" autocomplete="off" required aria-label="Message">
+        <button>Send</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+  <section class="owner-col">
+    <iframe src="/" title="Owner dashboard"></iframe>
+  </section>
+</div>
+<script>
+  // keep the chat scrolled to the newest message after each refresh
+  document.addEventListener("htmx:afterSwap", e => { if (e.target.id === "thread") e.target.scrollTop = e.target.scrollHeight; });
+  // after the dealer sends, refresh the owner's view so the hand-off shows up
+  document.addEventListener("htmx:afterRequest", e => {
+    if (e.detail.elt.classList.contains("compose")) document.querySelector(".owner-col iframe").contentWindow.location.reload();
+  });
+  window.addEventListener("load", () => { const t = document.getElementById("thread"); if (t) t.scrollTop = t.scrollHeight; });
+</script>
+{% endblock %}
