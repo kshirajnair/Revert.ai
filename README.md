@@ -272,6 +272,60 @@ Open http://127.0.0.1:8000/simulator. The dealer's phone is on the left and the 
    The banner says INV-1040 was paid and its reminders stopped. "Recovered this month" goes up by ₹22,770.
 10. **(1 min) Tally down.** Stop the mock and click Sync now. It fails cleanly and the data stays.
 
+## Test checklist
+
+A hands-on check of everything built so far, no accounts needed. Start from clean data:
+
+```bash
+python -m revert.mock_tally          # terminal 1: mock Tally on :9000
+python -m revert seed                # terminal 2: reset the DB and sync
+python -m revert serve --no-scheduler
+```
+
+Open http://127.0.0.1:8000/simulator. Pick who you are from "Chat as" on the left; the owner's
+dashboard is on the right.
+
+**Reminders**
+- [ ] Set Mahadev Traders' tone to firm and pause one dealer: each shows "Saved" / "Paused".
+- [ ] "as if at…" 10:00 PM, Run reminders: everything is deferred for quiet hours, nothing sent.
+- [ ] Clear the time, Run reminders: 15 sent, the paused dealer skipped. Mahadev's message lists
+      3 invoices, totals ₹80,000, signs as the business's assistant and shows the sync time.
+- [ ] Run reminders again: nothing is sent twice.
+
+**AI agent** (send each as that dealer)
+
+| Dealer | Message | Expected |
+|---|---|---|
+| Mahadev Traders | `I already paid 20k last week` | Asks for UTR or screenshot; appears under Needs you |
+| Mahadev Traders | `50k now, rest on 15th` | ₹50,000 today + remaining ₹30,000 by the 15th; shows in Promises due today |
+| Venkatesh Power Solutions | `INV-1043 rate is wrong, our PO said 1150` | Dispute logged; shows under Disputes |
+| Sharma Electricals | `Is 16A MCB available?` | 650 Nos, ₹195 + GST, with stock sync time |
+| Sharma Electricals | `send my statement` | Open invoices, total, last payments, and an "open PDF" link |
+| Sharma Electricals | `are you a bot?` | Says it is the automated assistant, not a person |
+| Patel Electric House | `मेरा कितना बाकी है?` | Answer in Hindi |
+| Kaveri Lighting Solutions | `ನಾಳೆ ಪಾವತಿ ಮಾಡುತ್ತೇನೆ` | Answer in Kannada; promise logged for tomorrow |
+| any dealer | `what's the weather` | Polite hand-off; appears under Needs you |
+
+- [ ] Run reminders: the banner names who is held back (promised to pay, says already paid, invoice under dispute).
+- [ ] Click Resolve on Venkatesh's dispute: his reminders resume on the next run.
+
+**Payments and Tally**
+- [ ] `python -m revert pay "Mahadev Traders" 22770 --invoice INV-1040`, then Sync now: INV-1040's
+      reminders stop and "Recovered this month" rises by ₹22,770.
+- [ ] Stop the mock Tally, then Sync now: a clear failure message, data unchanged.
+
+**WhatsApp pieces visible without WhatsApp**
+- [ ] On a dealer's page, add a number under Phone numbers; adding another dealer's number is refused. Remove it.
+- [ ] Open an invoice PDF and the Statement PDF from the dealer's page.
+- [ ] Outgoing messages show a ✓ delivery tick.
+
+**From the terminal**
+- [ ] `pytest`: all tests pass.
+- [ ] `python -m revert chat sharma "how much do I owe?"` prints the agent's reply.
+
+To start over at any point: `python -m revert seed` (or `seed --offline` without the mock).
+Real WhatsApp needs a Meta developer account; see "WhatsApp setup" above.
+
 ## Known limits
 
 - The Tally XML field names (`BILLCREDITPERIOD`, `STANDARDPRICELIST`, `LEDGERMOBILE`, …) follow
