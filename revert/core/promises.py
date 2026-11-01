@@ -16,12 +16,13 @@ from sqlalchemy.orm import Session
 
 from revert.agent import guard, tools
 from revert.agent.tools import Ctx, day, money
-from revert.channels.base import Channel, ChannelError
+from revert.channels.base import Channel, ChannelError, Template
 from revert.core.models import Buyer, Company, PaymentPromise, Receipt
 from revert.core.outbox import PhoneNotAllowed, send_to_buyer
 from revert.core.reminders import get_policy, in_quiet_hours
-from revert.core.timeutil import IST
+from revert.core.timeutil import IST, format_ist
 from revert.verticals.collections.replies import Composer
+from revert.verticals.collections.templates import followup_template
 
 log = logging.getLogger(__name__)
 
@@ -70,13 +71,13 @@ def promise_followups(session: Session, channel: Channel, now: datetime | None =
             if buyer.paused:
                 p.followed_up_at = now_utc  # the dealer asked us to stop; the owner sees the broken promise
                 continue
-            body, problems = followup_message(session, company, buyer, p, now.date())
+            body, template, problems = followup_message(session, company, buyer, p, now.date())
             if problems:
                 log.error("guard blocked promise follow-up to %s: %s", buyer.ledger_name, problems)
                 continue
             try:
                 send_to_buyer(session, channel, buyer, body, intent="promise_followup", action=FOLLOWUP_ACTION,
-                              meta={"promise_id": p.id}, now_utc=now_utc)
+                              meta={"promise_id": p.id}, now_utc=now_utc, template=template)
             except (ChannelError, PhoneNotAllowed) as e:
                 log.warning("promise follow-up to %s failed: %s", buyer.ledger_name, e)
                 continue
@@ -87,7 +88,8 @@ def promise_followups(session: Session, channel: Channel, now: datetime | None =
 
 
 def followup_message(session: Session, company: Company, buyer: Buyer, p: PaymentPromise,
-                     today: date) -> tuple[str, list[str]]:
+                     today: date) -> tuple[str, Template, list[str]]:
+    """Free-text follow-up, the matching WhatsApp template, and guard problems (for both)."""
     ctx = Ctx(session, company, buyer, today)
     ctx.facts.add(money(p.amount_paise), day(p.due_date))
     c = Composer(buyer.language, company.name, buyer.ledger_name)
@@ -97,4 +99,9 @@ def followup_message(session: Session, company: Company, buyer: Buyer, p: Paymen
         c.say("still_pending", total=money(dues.total_paise))
     c.synced(tools.synced_at(ctx))
     body = c.text()
-    return body, guard.check_reply(body, ctx.facts.texts, "", company.name, c.lang)
+    template = followup_template(company_name=company.name, buyer_name=buyer.ledger_name, language=c.lang,
+                                 amount_paise=p.amount_paise, due=p.due_date, pending_paise=dues.total_paise,
+                                 synced_at_text=format_ist(company.last_synced_at))
+    problems = guard.check_reply(body, ctx.facts.texts, "", company.name, c.lang)
+    problems += guard.check_reply(template.render(), ctx.facts.texts, "", company.name, c.lang)
+    return body, template, problems

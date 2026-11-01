@@ -32,6 +32,19 @@ class Settings:
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
+    # WhatsApp Cloud API (CHANNEL=whatsapp)
+    whatsapp_token: str = ""
+    whatsapp_phone_number_id: str = ""
+    whatsapp_verify_token: str = ""
+    whatsapp_app_secret: str = ""
+    whatsapp_api_version: str = "v23.0"
+    whatsapp_reminder_template: str = "revert_payment_reminder"
+    whatsapp_followup_template: str = "revert_promise_followup"
+    media_dir: str = "./media"  # payment screenshots dealers send
+    # HTTP Basic password for the dashboard (any username). Set it before exposing the app through
+    # a tunnel for the WhatsApp webhook; /webhooks/* and /healthz stay open (Meta signs its calls).
+    dashboard_password: str = ""
+
     @property
     def llm_api_key(self) -> str:
         return {"gemini": self.gemini_api_key, "claude": self.anthropic_api_key,
@@ -59,4 +72,13 @@ def get_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        whatsapp_token=os.getenv("WHATSAPP_TOKEN", ""),
+        whatsapp_phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID", ""),
+        whatsapp_verify_token=os.getenv("WHATSAPP_VERIFY_TOKEN", ""),
+        whatsapp_app_secret=os.getenv("WHATSAPP_APP_SECRET", ""),
+        whatsapp_api_version=os.getenv("WHATSAPP_API_VERSION", "v23.0"),
+        whatsapp_reminder_template=os.getenv("WHATSAPP_REMINDER_TEMPLATE", "revert_payment_reminder"),
+        whatsapp_followup_template=os.getenv("WHATSAPP_FOLLOWUP_TEMPLATE", "revert_promise_followup"),
+        media_dir=os.getenv("MEDIA_DIR", "./media"),
+        dashboard_password=os.getenv("DASHBOARD_PASSWORD", ""),
     )

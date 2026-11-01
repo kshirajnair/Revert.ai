@@ -223,6 +223,10 @@ class MessageLog(Base):
     action: Mapped[str] = mapped_column(String(80), default="")
     outcome: Mapped[str] = mapped_column(String(80), default="")
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    # the channel's message id (WhatsApp "wamid..."): dedupes webhook retries, matches delivery receipts
+    provider_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # sent | delivered | read | failed, from WhatsApp delivery receipts (outbound only)
+    delivery: Mapped[str | None] = mapped_column(String(12), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     buyer: Mapped[Buyer | None] = relationship()

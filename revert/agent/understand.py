@@ -139,7 +139,9 @@ def classify_rules(text: str, today: date, fallback_language: str = "en") -> Und
     qty_m = re.search(r"\b(\d{1,5})\s*(?:pcs|pieces|nos|units?|coils?|no\.?)?\s*(?=[a-z]*\s*(?:mcb|rccb|isolator|"
                       r"distribution|db|switch|socket|plate|wire|cable|changeover))", text, re.I)
 
-    if _has(text, _DISPUTE):
+    if text.strip().lower().strip(".! ") in ("stop", "unsubscribe", "band karo", "बंद करो"):
+        intent = "opt_out"
+    elif _has(text, _DISPUTE):
         intent = "dispute"
     elif pay_refs or (_has(text, _PAID) and not _has(text, ["will pay", "dunga", "denge", "karunga"])):
         intent = "already_paid"

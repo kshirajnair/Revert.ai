@@ -1,7 +1,7 @@
 {% for m in messages %}
 <div class="bubble {{ 'mine' if m.direction == 'in' else 'theirs' }}">
   <div class="text">{{ m.body }}</div>
-  <div class="meta">{{ m.created_at | ist_short }}{% if m.intent %} · {{ m.intent }} → {{ m.action }}{% endif %}</div>
+  <div class="meta">{{ m.created_at | ist_short }}{% if m.intent %} · {{ m.intent }} → {{ m.action }}{% endif %}{% include "_msg_extras.html" %}</div>
 </div>
 {% else %}
 <p class="muted center">No messages yet. Run reminders on the dashboard, or say hello.</p>

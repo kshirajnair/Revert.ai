@@ -41,6 +41,8 @@ class Reply:
     action: str  # what Revert did about it
     outcome: str  # state of the inbound message afterwards
     meta: dict = field(default_factory=dict)
+    # PDFs to send after the text: {"kind": "invoice", "invoice_id": n} | {"kind": "statement"}
+    attachments: list[dict] = field(default_factory=list)
 
 
 class Agent:
@@ -54,10 +56,18 @@ class Agent:
     def handle(self, session: Session, buyer: Buyer, inbound: MessageLog, today: date | None = None,
                now_utc: datetime | None = None) -> Reply:
         today = today or (to_ist(now_utc).date() if now_utc else today_ist())
-        u = understand(inbound.body, today, buyer.language, self.llm)
+        media = (inbound.meta or {}).get("media")
+        text = media.get("caption", "") if media else inbound.body
+        u = understand(text, today, buyer.language, self.llm)
         ctx = Ctx(session, buyer.company, buyer, today, now_utc=now_utc)
         c = Composer(u.language, buyer.company.name, buyer.ledger_name, upset=u.upset)
-        reply = getattr(self, f"_{u.intent}")(ctx, u, c, inbound)
+        if media and media.get("kind") not in ("image", "document"):
+            reply = Reply(c.say("unsupported_media").text(), "media", "handoff_owner", AWAITING_OWNER)
+        elif media and u.intent in ("already_paid", "unclear", "smalltalk", "promise_to_pay"):
+            # a picture or PDF from a dealer being chased is almost always a payment proof
+            reply = self._screenshot(ctx, u, c, inbound)
+        else:
+            reply = getattr(self, f"_{u.intent}")(ctx, u, c, inbound)
         if u.upset and reply.outcome == ANSWERED:
             reply.outcome = AWAITING_OWNER  # an annoyed dealer gets a person's attention too
 
@@ -100,6 +110,11 @@ class Agent:
         else:
             c.say("paid_not_found")
         return Reply(c.text(), u.intent, "log_payment_claim", AWAITING_OWNER)
+
+    def _screenshot(self, ctx: Ctx, u: Understanding, c: Composer, inbound: MessageLog) -> Reply:
+        tools.log_claim(ctx, u.payment_ref or "screenshot", inbound)
+        c.say("screenshot_received")
+        return Reply(c.text(), "already_paid", "log_payment_claim", AWAITING_OWNER)
 
     def _pending_line(self, ctx: Ctx, c: Composer) -> None:
         dues = tools.open_dues(ctx)
@@ -161,9 +176,10 @@ class Agent:
                 c.say("invoice_paid")
             else:
                 c.say("invoice_open", paid=money(i.paid_paise), balance=money(i.balance_paise), due=day(i.due_date))
-        c.synced(tools.synced_at(ctx))
+        c.say("pdf_attached").synced(tools.synced_at(ctx))
         return Reply(c.text(), u.intent, "send_invoice", ANSWERED,
-                     meta={"invoices": [i.number for i in invoices[:3]]})
+                     meta={"invoices": [i.number for i in invoices[:3]]},
+                     attachments=[{"kind": "invoice", "invoice_id": i.id} for i in invoices[:3]])
 
     def _statement(self, ctx: Ctx, c: Composer, with_payments: bool) -> None:
         dues = tools.open_dues(ctx)
@@ -185,7 +201,8 @@ class Agent:
 
     def _send_statement(self, ctx: Ctx, u: Understanding, c: Composer, inbound: MessageLog) -> Reply:
         self._statement(ctx, c, with_payments=True)
-        return Reply(c.text(), u.intent, "send_statement", ANSWERED)
+        c.say("pdf_attached")
+        return Reply(c.text(), u.intent, "send_statement", ANSWERED, attachments=[{"kind": "statement"}])
 
     def _balance_query(self, ctx: Ctx, u: Understanding, c: Composer, inbound: MessageLog) -> Reply:
         self._statement(ctx, c, with_payments=False)

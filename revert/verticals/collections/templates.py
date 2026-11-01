@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from revert.channels.base import Template, template_param
 from revert.core.money import format_inr_exact
 
 # Words that must never appear in an automated message. Checked by tests for every tone.
@@ -104,3 +105,63 @@ def reminder_message(*, company_name: str, buyer_name: str, tone: str, items: li
 def handoff_reply(*, company_name: str, buyer_name: str) -> str:
     return (f"Thank you, {buyer_name}. This is {assistant_name(company_name)}. "
             "I've passed your message to the team and someone will get back to you shortly.")
+
+
+# --- WhatsApp templates ---------------------------------------------------------------------
+# Business-initiated messages outside WhatsApp's 24-hour window must use templates that Meta has
+# approved in advance. Submit these texts exactly (one template, three languages each); print them
+# with `python -m revert wa-templates`. Parameters can't contain line breaks, so invoices are
+# listed on one line. Tone is neutral here: the toned free-text reminder is used when the dealer
+# has written in the last 24 hours.
+
+WA_TEMPLATES = {
+    "payment_reminder": {
+        "en": "Namaste {{1}}, this is {{2}}'s assistant. As per our books, these payments are due: {{3}}. "
+              "Total: {{4}}. Please reply here with the date you will pay, or let us know if you have already "
+              "paid. Amounts updated {{5}}.",
+        "hi": "नमस्ते {{1}} जी, मैं {{2}} का असिस्टेंट हूँ। हमारे खातों के अनुसार ये भुगतान देय हैं: {{3}}। कुल: {{4}}। "
+              "कृपया यहाँ बताएँ कि आप किस तारीख को भुगतान करेंगे, या अगर भुगतान कर दिया है तो बताएँ। राशि {{5}} तक "
+              "अपडेट।",
+        "kn": "ನಮಸ್ಕಾರ {{1}} ಅವರೇ, ನಾನು {{2}} ಸಂಸ್ಥೆಯ ಸಹಾಯಕ. ನಮ್ಮ ಲೆಕ್ಕದ ಪ್ರಕಾರ ಈ ಪಾವತಿಗಳು ಬಾಕಿ ಇವೆ: {{3}}. ಒಟ್ಟು: "
+              "{{4}}. ದಯವಿಟ್ಟು ಪಾವತಿ ಮಾಡುವ ದಿನಾಂಕವನ್ನು ಇಲ್ಲಿ ತಿಳಿಸಿ, ಅಥವಾ ಈಗಾಗಲೇ ಪಾವತಿಸಿದ್ದರೆ ತಿಳಿಸಿ. ಮೊತ್ತಗಳು {{5}} "
+              "ರವರೆಗೆ ಅಪ್‌ಡೇಟ್ ಆಗಿವೆ.",
+    },
+    "promise_followup": {
+        "en": "Namaste {{1}}, this is {{2}}'s assistant. You had mentioned paying {{3}} by {{4}}. We haven't "
+              "received it in our books yet. Please reply with an update, or the payment reference if you have "
+              "already paid. Pending now: {{5}}. Amounts updated {{6}}.",
+        "hi": "नमस्ते {{1}} जी, मैं {{2}} का असिस्टेंट हूँ। आपने {{4}} तक {{3}} भुगतान करने की बात कही थी। यह अभी हमारे "
+              "खातों में नहीं आया है। कृपया जानकारी दें, या अगर भुगतान कर दिया है तो रेफरेंस नंबर भेजें। अभी बाकी: {{5}}। "
+              "राशि {{6}} तक अपडेट।",
+        "kn": "ನಮಸ್ಕಾರ {{1}} ಅವರೇ, ನಾನು {{2}} ಸಂಸ್ಥೆಯ ಸಹಾಯಕ. {{4}} ರೊಳಗೆ {{3}} ಪಾವತಿಸುವುದಾಗಿ ತಿಳಿಸಿದ್ದಿರಿ. ಅದು ಇನ್ನೂ "
+              "ನಮ್ಮ ಲೆಕ್ಕದಲ್ಲಿ ಬಂದಿಲ್ಲ. ದಯವಿಟ್ಟು ಮಾಹಿತಿ ನೀಡಿ, ಅಥವಾ ಈಗಾಗಲೇ ಪಾವತಿಸಿದ್ದರೆ ರೆಫರೆನ್ಸ್ ಸಂಖ್ಯೆ ಕಳುಹಿಸಿ. ಈಗ "
+              "ಬಾಕಿ: {{5}}. ಮೊತ್ತಗಳು {{6}} ರವರೆಗೆ ಅಪ್‌ಡೇಟ್ ಆಗಿವೆ.",
+    },
+}
+_DUE_WORD = {"en": "due {d}", "hi": "(देय {d})", "kn": "(ಪಾವತಿ ದಿನಾಂಕ {d})"}
+MAX_TEMPLATE_INVOICES = 10
+
+
+def _lang(language: str) -> str:
+    return language if language in ("en", "hi", "kn") else "en"
+
+
+def reminder_template(*, company_name: str, buyer_name: str, language: str, items: list[ReminderLine],
+                      synced_at_text: str) -> Template:
+    lang = _lang(language)
+    ordered = sorted(items, key=lambda i: i.due_date)
+    parts = [f"{i.number} {format_inr_exact(i.balance_paise)} " + _DUE_WORD[lang].format(d=f"{i.due_date:%d %b}")
+             for i in ordered[:MAX_TEMPLATE_INVOICES]]
+    listed = "; ".join(parts) + ("; …" if len(ordered) > MAX_TEMPLATE_INVOICES else "")
+    params = (buyer_name, company_name, listed, format_inr_exact(sum(i.balance_paise for i in items)), synced_at_text)
+    return Template("payment_reminder", lang, WA_TEMPLATES["payment_reminder"][lang],
+                    tuple(template_param(p) for p in params))
+
+
+def followup_template(*, company_name: str, buyer_name: str, language: str, amount_paise: int, due: date,
+                      pending_paise: int, synced_at_text: str) -> Template:
+    lang = _lang(language)
+    params = (buyer_name, company_name, format_inr_exact(amount_paise), f"{due:%d %b %Y}",
+              format_inr_exact(pending_paise), synced_at_text)
+    return Template("promise_followup", lang, WA_TEMPLATES["promise_followup"][lang],
+                    tuple(template_param(p) for p in params))

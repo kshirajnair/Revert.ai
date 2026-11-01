@@ -1,0 +1,9 @@
+{#- links and delivery state for one message; used by the chat thread and the buyer page -#}
+{%- set att = (m.meta or {}).get("attachment") -%}
+{%- set media = (m.meta or {}).get("media") -%}
+{%- if att and att.kind == "invoice" %} · <a href="/buyers/{{ m.buyer_id }}/invoices/{{ att.invoice_id }}.pdf" target="_blank">open PDF</a>
+{%- elif att and att.kind == "statement" %} · <a href="/buyers/{{ m.buyer_id }}/statement.pdf" target="_blank">open PDF</a>
+{%- endif -%}
+{%- if media and media.path %} · <a href="/messages/{{ m.id }}/media" target="_blank">view {{ media.kind }}</a>{% endif -%}
+{%- if (m.meta or {}).get("template") %} · template{% endif -%}
+{%- if m.direction == "out" and m.delivery %} <span class="tick {{ m.delivery }}" title="{{ m.delivery }}">{{ {"sent": "✓", "delivered": "✓✓", "read": "✓✓", "failed": "⚠ failed"}[m.delivery] }}</span>{% endif -%}

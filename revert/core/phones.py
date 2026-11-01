@@ -16,4 +16,16 @@ def normalize_phone(raw: str | None) -> str | None:
         return "+91" + digits
     if len(digits) == 12 and digits.startswith("91"):
         return "+" + digits
+
+
+def is_demo_number(phone: str) -> bool:
+    """Indian numbers never start with 0 after +91. The seed uses +91 00000 xxxxx on purpose, so
+    such numbers are simulator-only and are never handed to WhatsApp."""
+    return phone.startswith("+910")
     return "+" + digits
+
+
+def is_demo_number(phone: str) -> bool:
+    """Indian numbers never start with 0 after +91. The seed uses +91 00000 xxxxx on purpose, so
+    such numbers are simulator-only and are never handed to WhatsApp."""
+    return phone.startswith("+910")

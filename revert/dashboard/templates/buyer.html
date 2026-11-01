@@ -29,19 +29,43 @@
 </section>
 
 <section class="card">
+  <h2>Phone numbers</h2>
+  <ul class="list">
+    {% for p in buyer.phones %}
+    <li>
+      <div><strong>{{ p.phone }}</strong> <small class="muted">{{ "from Tally" if p.source == "tally" else "added by you" }}{% if p.phone.startswith("+910") %} · demo number, simulator only{% endif %}</small></div>
+      <div class="row-actions">
+        {% if p.is_primary %}<span class="tag ok">messages go here</span>
+        {% else %}<form method="post" action="/buyers/{{ buyer.id }}/phones/{{ p.id }}/primary"><button class="ghost">Use this</button></form>{% endif %}
+        {% if p.source == "manual" %}<form method="post" action="/buyers/{{ buyer.id }}/phones/{{ p.id }}/delete"><button class="ghost">Remove</button></form>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/buyers/{{ buyer.id }}/phones" class="reply">
+    <input name="phone" placeholder="Add a WhatsApp number, e.g. +91 98765 43210" autocomplete="off" required aria-label="WhatsApp number">
+    <label class="switch small"><input type="checkbox" name="primary" checked> use it</label>
+    <button>Add</button>
+  </form>
+  <p class="muted small">Revert only ever messages the numbers listed here.</p>
+</section>
+
+<section class="card">
   <h2>Open invoices</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th class="num">Total</th><th class="num">Pending</th><th class="num">Days late</th></tr></thead>
+    <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th class="num">Total</th><th class="num">Pending</th><th class="num">Days late</th><th></th></tr></thead>
     <tbody>
     {% for i in ageing.invoices %}
       <tr><td>{{ i.number }}</td><td>{{ i.date.strftime("%d %b %Y") }}</td><td>{{ i.due_date.strftime("%d %b") }}</td>
           <td class="num">{{ i.total_paise | inr_exact }}</td><td class="num">{{ i.balance_paise | inr_exact }}</td>
-          <td class="num">{{ i.days_overdue if i.days_overdue >= 0 else "not due" }}</td></tr>
-    {% else %}<tr><td colspan="6" class="muted">Nothing outstanding.</td></tr>{% endfor %}
+          <td class="num">{{ i.days_overdue if i.days_overdue >= 0 else "not due" }}</td>
+          <td><a href="/buyers/{{ buyer.id }}/invoices/{{ i.invoice_id }}.pdf" target="_blank">PDF</a></td></tr>
+    {% else %}<tr><td colspan="7" class="muted">Nothing outstanding.</td></tr>{% endfor %}
     </tbody>
   </table>
   </div>
+  <p class="small"><a href="/buyers/{{ buyer.id }}/statement.pdf" target="_blank">Statement PDF</a></p>
 </section>
 
 <section class="card">
@@ -51,7 +75,7 @@
     <div class="logline {{ m.direction }}">
       <div class="who">{{ "Dealer" if m.direction == "in" else ("You" if m.action == "owner_reply" else "Revert") }} · {{ m.created_at | ist_short }}</div>
       <div class="body">{{ m.body }}</div>
-      <div class="meta">intent: {{ m.intent or "-" }} · action: {{ m.action or "-" }} · outcome: {{ m.outcome or "-" }}</div>
+      <div class="meta">{{ m.channel }} · intent: {{ m.intent or "-" }} · action: {{ m.action or "-" }} · outcome: {{ m.outcome or "-" }}{% include "_msg_extras.html" %}</div>
     </div>
     {% else %}<p class="muted">No messages yet.</p>{% endfor %}
   </div>

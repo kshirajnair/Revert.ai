@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import uuid
 
-from revert.channels.base import Channel
+from revert.channels.base import Channel, Template
 
 
 class WebSimulatorChannel(Channel):
     name = "web_simulator"
 
     def send_text(self, phone: str, body: str) -> str:
+        return f"sim-{uuid.uuid4().hex[:12]}"
+
+    def send_template(self, phone: str, template: Template) -> str:
+        return f"sim-{uuid.uuid4().hex[:12]}"
+
+    def send_document(self, phone: str, data: bytes, filename: str, caption: str = "") -> str:
         return f"sim-{uuid.uuid4().hex[:12]}"

@@ -8,6 +8,8 @@
     remind  [--at "YYYY-MM-DD HH:MM"]           run the reminder engine once (optionally as if at an IST time)
     serve   [--offline] [--no-scheduler]        dashboard + chat simulator on http://127.0.0.1:8000
     chat    DEALER MESSAGE                      message the AI agent as that dealer and print its reply
+    wa-templates                                print the WhatsApp templates to submit in Meta
+    whatsapp-check                              check WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID work
 """
 from __future__ import annotations
 
@@ -166,6 +168,49 @@ def cmd_chat(args) -> int:
     return 0
 
 
+def cmd_wa_templates(_args) -> int:
+    from revert.verticals.collections.templates import WA_TEMPLATES
+
+    s = get_settings()
+    names = {"payment_reminder": s.whatsapp_reminder_template, "promise_followup": s.whatsapp_followup_template}
+    samples = {
+        "payment_reminder": ["Mahadev Traders", "Shree Ganesh Electricals",
+                             "INV-1040 ₹22,770 due 12 Sep; INV-1056 ₹31,860 due 03 Oct", "₹54,630",
+                             "01 Nov 2026, 10:15 AM IST"],
+        "promise_followup": ["Mahadev Traders", "Shree Ganesh Electricals", "₹50,000", "01 Nov 2026", "₹80,000",
+                             "02 Nov 2026, 10:15 AM IST"],
+    }
+    print("Create these in WhatsApp Manager > Message templates. Category: Utility. One template per name,")
+    print("with three languages: English (en), Hindi (hi), Kannada (kn). Paste the body exactly.\n")
+    for key, langs in WA_TEMPLATES.items():
+        print(f"=== Template name: {names[key]}")
+        print(f"    Sample values for {{{{1}}}}..{{{{{len(samples[key])}}}}}: " + " | ".join(samples[key]))
+        for lang, text in langs.items():
+            print(f"--- {lang}\n{text}\n")
+    return 0
+
+
+def cmd_whatsapp_check(_args) -> int:
+    from revert.channels.base import ChannelError
+    from revert.channels.whatsapp import WhatsAppChannel
+
+    s = get_settings()
+    try:
+        info = WhatsAppChannel(s.whatsapp_token, s.whatsapp_phone_number_id, s.whatsapp_api_version).check()
+    except (ValueError, ChannelError) as e:
+        print(f"WhatsApp check FAILED: {e}")
+        return 1
+    print(f"WhatsApp OK: {info.get('verified_name', '?')} ({info.get('display_phone_number', '?')}), "
+          f"quality {info.get('quality_rating', '?')}")
+    missing = [k for k, v in (("WHATSAPP_VERIFY_TOKEN", s.whatsapp_verify_token),
+                              ("WHATSAPP_APP_SECRET", s.whatsapp_app_secret)) if not v]
+    if missing:
+        print(f"Still needed to receive messages: {', '.join(missing)}")
+    if s.channel != "whatsapp":
+        print("Set CHANNEL=whatsapp in .env to send through WhatsApp.")
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
 
@@ -173,6 +218,9 @@ def cmd_serve(args) -> int:
 
     s = get_settings()
     app = create_app(s, offline=args.offline, scheduler=not args.no_scheduler)
+    if s.channel == "whatsapp" and not s.dashboard_password:
+        print("WARNING: CHANNEL=whatsapp without DASHBOARD_PASSWORD. Set one before exposing this app "
+              "through a tunnel, or anyone with the URL can see your books.")
     print(f"Dashboard:       http://{s.host}:{s.port}/")
     print(f"Chat simulator:  http://{s.host}:{s.port}/simulator")
     uvicorn.run(app, host=s.host, port=s.port, log_level="info")
@@ -205,6 +253,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("chat")
     p.add_argument("dealer", help="dealer name, or a unique part of it")
     p.add_argument("message")
+    sub.add_parser("wa-templates")
+    sub.add_parser("whatsapp-check")
     args = ap.parse_args(argv)
     return {"seed": cmd_seed, "sync": cmd_sync, "ageing": cmd_ageing, "status": cmd_status, "pay": cmd_pay,
-            "remind": cmd_remind, "serve": cmd_serve, "chat": cmd_chat}[args.cmd](args)
+            "remind": cmd_remind, "serve": cmd_serve, "chat": cmd_chat,
+            "wa-templates": cmd_wa_templates, "whatsapp-check": cmd_whatsapp_check}[args.cmd](args)

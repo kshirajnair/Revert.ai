@@ -271,7 +271,7 @@ def log_claim(ctx: Ctx, reference: str, message: MessageLog) -> PaymentClaim:
 def close_claims_matched_by(ctx: Ctx, receipt: Receipt) -> None:
     for c in ctx.session.scalars(select(PaymentClaim).where(PaymentClaim.buyer_id == ctx.buyer.id,
                                                             PaymentClaim.status == "open")):
-        if not c.reference or _squash(c.reference) in _squash(receipt.narration):
+        if not c.reference or c.reference == "screenshot" or _squash(c.reference) in _squash(receipt.narration):
             ctx.changed(c, "status", "matched")
 
 
@@ -284,7 +284,7 @@ def match_claims(session: Session, company_id: int) -> int:
     n = 0
     claims = session.scalars(select(PaymentClaim).where(PaymentClaim.company_id == company_id,
                                                         PaymentClaim.status == "open",
-                                                        PaymentClaim.reference != "")).all()
+                                                        PaymentClaim.reference.not_in(["", "screenshot"]))).all()
     for c in claims:
         ref = _squash(c.reference)
         if any(ref in _squash(r.narration) for r in session.scalars(select(Receipt).where(Receipt.buyer_id == c.buyer_id))):

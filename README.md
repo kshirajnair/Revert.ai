@@ -3,13 +3,15 @@
 An AI assistant for Indian manufacturers and distributors. It chases overdue payments
 over WhatsApp and answers dealer questions (stock, rates, dues).
 
-**Status: Phase 3 of 5.**
+**Status: Phase 4 of 5.**
 - Phase 1: data model, demo company, mock TallyPrime server, Tally XML connector, sync job, ageing.
 - Phase 2: reminder engine, web chat simulator, owner dashboard.
 - Phase 3: AI agent: "already paid", invoices and statements, promises to pay with follow-up,
   disputes, stock and rates, hand-off; English, Hindi and Kannada replies.
+- Phase 4: WhatsApp Cloud API: replies, approved templates outside the 24-hour window, invoice and
+  statement PDFs, payment screenshots, delivery receipts, signed webhook, dashboard password.
 
-Next: WhatsApp (Phase 4), the real Tally connector and CSV upload (Phase 5).
+Next: the real Tally connector and CSV upload (Phase 5).
 
 ## Setup (Windows / macOS / Linux)
 
@@ -73,17 +75,20 @@ python -m revert remind --at "2026-11-02 10:30"  # ...as if it were that IST tim
 python -m revert pay "Mahadev Traders" 22770 --invoice INV-1040   # mock only: book a payment in "Tally"
 python -m revert sync                            # pick it up; reminders for INV-1040 stop
 python -m revert chat mahadev "50k now, rest on 15th"   # message the agent as a dealer
+python -m revert wa-templates                    # WhatsApp template texts to submit to Meta
+python -m revert whatsapp-check                  # test your WhatsApp token and phone number id
 ```
 
-Tests: `pytest` (220 tests, about 15 seconds). They never call a real LLM.
+Tests: `pytest` (245 tests, about 15 seconds). They never call a real LLM or Meta.
 
 ## How it fits together
 
 ```
 TallyPrime :9000 ──XML──► connectors/tally_xml ──Snapshot──► core/sync ──► DB ──► core/ageing
 mock_tally :9000 ──same XML──┘                                     │          └──► core/reminders ──► core/outbox ──► channel
-                                                                   └─ paid invoices stop their reminders             (web simulator now,
-dealer message ──► channel ──► core/conversation ──► agent ──► reply via core/outbox                          WhatsApp in Phase 4)
+                                                                   └─ paid invoices stop their reminders             (WhatsApp, or the
+WhatsApp ──signed webhook──► core/conversation ──► agent ──► reply (+ PDF) via core/outbox                     web simulator)
+simulator ─────────────────┘           delivery receipts ──► message log (✓ ✓✓ read, failed → stage retried)
 
 agent:  understand (LLM or offline rules) ──► tools (DB reads/writes) ──► reply templates (en/hi/kn) ──► guard ──► send
 ```
@@ -93,7 +98,7 @@ agent:  understand (LLM or offline rules) ──► tools (DB reads/writes) ─�
 | `revert/connectors/` | `base.py`: the connector interface and the records it returns. `tally_xml.py`: TDL Collection export requests and parsers (read-only, Export only). `mock_tally.py`: the same connector pointed at the mock |
 | `revert/mock_tally/` | Stdlib HTTP server that answers Tally XML requests from the seed books. `/_mock/receipt` books a payment for demos |
 | `revert/core/` | SQLAlchemy models, `sync.py`, `ageing.py`, `reminders.py` (the engine), `promises.py` (kept/broken + follow-ups), `outbox.py` (the only way messages go out), `conversation.py` (inbound), `jobs.py` (sync + reminders, shared by the CLI, buttons and scheduler) |
-| `revert/channels/` | `base.py`: the channel interface. `web_simulator.py`: delivery is the message log itself, so nothing leaves the laptop |
+| `revert/channels/` | `base.py`: the channel interface and templates. `web_simulator.py`: delivery is the message log itself, so nothing leaves the laptop. `whatsapp.py`: Cloud API sending (text, templates, PDFs), media download, webhook signature check and parsing |
 | `revert/agent/` | `understand.py` (intent + slots, LLM or offline rules), `llm.py` (Gemini/Claude/OpenAI over plain HTTPS), `parse.py` (amounts, dates, UTRs in English/Hindi/Kannada), `tools.py` (the only DB access), `guard.py` (checks every reply), `agent.py` (one handler per intent) |
 | `revert/verticals/collections/` | Reminder templates (by tone and stage), agent reply texts in three languages (`replies.py`), and the inbound handler that calls the agent |
 | `revert/dashboard/` | FastAPI app, Jinja2 templates, one CSS file. HTMX drives the tone/pause controls and the live chat thread |
@@ -124,6 +129,7 @@ Conventions:
 | Promise to pay | No reminders until the promised date. If it passes unpaid, one polite follow-up, then the normal schedule |
 | Dispute | No reminders for the disputed invoice (or for the dealer, if no invoice was named) until the owner clicks Resolve |
 | "Already paid" | Reminders wait 3 days while the owner checks. A claim is closed automatically when a synced receipt carries the same UTR |
+| WhatsApp 24-hour rule | If the dealer hasn't written in 24 hours, the approved `revert_payment_reminder` template goes instead, in the dealer's language (Hindi or Kannada too) |
 | Message content | Opens with "Shree Ganesh Electricals's assistant", quotes only invoice numbers and balances from the DB, ends with the last-synced time, and never threatens or mentions legal action in any tone |
 
 Scheduled reminders are English only for now. Agent replies are in the dealer's language.
@@ -168,6 +174,62 @@ An annoyed dealer gets an apology first, and the message also goes to Needs you.
   number or UTR finds nothing.
 - **Everything logged.** Each inbound message records its intent, action, outcome, and what the
   agent understood (engine, language, extracted dates and amounts).
+
+## WhatsApp setup
+
+Everything works without WhatsApp: the simulator is the default. To use real WhatsApp you need a
+Meta (Facebook) account, which only you can create. Steps:
+
+1. **Create the app.** At developers.facebook.com, create an app of type *Business* and add the
+   *WhatsApp* product. Meta gives you a free test business number.
+2. **Copy the IDs.** On *WhatsApp > API Setup*, copy the temporary access token and the
+   *Phone number ID*. Add your own mobile under "To" as a test recipient (the test number can
+   message up to 5 verified numbers). The App secret is under *App settings > Basic*.
+3. **Fill in `.env`:**
+   ```bash
+   CHANNEL=whatsapp
+   WHATSAPP_TOKEN=...
+   WHATSAPP_PHONE_NUMBER_ID=...
+   WHATSAPP_APP_SECRET=...
+   WHATSAPP_VERIFY_TOKEN=any-random-string-you-choose
+   DASHBOARD_PASSWORD=pick-a-password
+   ```
+   Then check them: `python -m revert whatsapp-check`.
+4. **Expose the webhook.** Meta must reach `/webhooks/whatsapp` over HTTPS. On a laptop, use a
+   tunnel, for example Cloudflare's quick tunnel (free, no account):
+   `cloudflared tunnel --url http://localhost:8000`. **Set `DASHBOARD_PASSWORD` first**: the tunnel
+   makes the whole app public, and the password keeps everything except the webhook locked.
+5. **Register the webhook.** In *WhatsApp > Configuration*, set the Callback URL to
+   `https://<your-tunnel>/webhooks/whatsapp` and the Verify token to your `WHATSAPP_VERIFY_TOKEN`,
+   then subscribe to the **messages** field. Every call Meta makes is signed. Revert rejects
+   unsigned ones and ignores Meta's duplicate retries.
+6. **Submit the templates.** Run `python -m revert wa-templates` and create the two templates it
+   prints in *WhatsApp Manager > Message templates* (category *Utility*, languages en, hi, kn).
+   Until they're approved, reminders to dealers who haven't written in 24 hours fail. They show as
+   failed and are retried on the next run.
+7. **Try it.** Open a dealer's page (say Mahadev) and add your own mobile under *Phone numbers*.
+   Message the test number from your phone ("how much do I owe?"); the agent answers on WhatsApp.
+   Click *Run reminders*: you get the reminder template in Mahadev's language (Hindi).
+
+How it behaves:
+- **Demo dealers stay in the simulator.** Numbers that can't exist in India (`+91 0…`, all the seed
+  data) are never sent to WhatsApp, so you can mix demo dealers with your own real number.
+- **Free text vs templates.** Within 24 hours of a dealer's last message the agent and the owner
+  can send anything. After that, only reminders and promise follow-ups go out, as templates. An
+  owner reply outside the window is refused with an explanation.
+- **PDFs.** "Send invoice 1043" or "send my statement" gets the text answer plus a PDF built from
+  the books. The owner can open the same PDFs from the dealer's page.
+- **Screenshots.** A photo or PDF from a dealer is saved under `MEDIA_DIR`, logged as "already
+  paid", shown under Needs you with a link, and reminders wait 3 days. Voice notes and other media
+  go to the owner.
+- **Delivery receipts.** ✓ sent, ✓✓ delivered, blue ✓✓ read, ⚠ failed. A reminder that fails
+  after sending (e.g. the number isn't on WhatsApp) frees its stage so the next run retries.
+- **Tokens.** The temporary token expires after 24 hours. For daily use, create a System User token
+  in Meta Business Settings.
+
+**Cost.** The test number is free. On a real business number, Meta bills per template message
+(reminders and follow-ups outside the 24-hour window; check Meta's current India rates). Replies
+inside the 24-hour window are free.
 
 ## Demo data
 
@@ -215,9 +277,12 @@ Open http://127.0.0.1:8000/simulator. The dealer's phone is on the left and the 
 - The Tally XML field names (`BILLCREDITPERIOD`, `STANDARDPRICELIST`, `LEDGERMOBILE`, …) follow
   TallyPrime's Collection export. They will be checked against a real TallyPrime in Phase 5.
 - Invoices deleted in Tally are not removed from Revert yet.
-- Invoices and statements go out as text. PDF copies and payment screenshots come with WhatsApp in Phase 4.
+- Screenshots are stored and shown to the owner, not read automatically. The owner matches them to Tally.
+- One business number per installation. Template names are fixed in `.env`; tone applies only to
+  free-text reminders (templates are tone-neutral).
 - The Hindi and Kannada texts are simple business language. Have a native speaker review them before going live.
 - The offline classifier knows common phrasings. Unusual wording falls to "unclear" and goes to the owner.
   A Gemini key covers much more.
 - Orders are not placed in Tally (Revert is read-only). They go to the owner to book.
-- The dashboard has no login. Run it on your own machine only until auth is added.
+- The dashboard has one shared password (`DASHBOARD_PASSWORD`), no user accounts. Without it,
+  keep the app on your own machine.

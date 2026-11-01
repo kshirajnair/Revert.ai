@@ -11,6 +11,9 @@ default -3, 0, +7, +15, +30). On every run:
    buyer who already got `max_per_week` reminders in the last 7 days. These are deferred, not
    dropped: no row is written, so the next run tries again.
 4. A sent message writes one `sent` Reminder row per invoice, so the stage never repeats.
+   On WhatsApp, outside the 24-hour window the approved `payment_reminder` template goes instead
+   (in the dealer's language); if Meta later reports the message failed, the rows are removed so
+   the stage is retried.
 
 Agent holds (Phase 3): invoices under dispute are left out; a buyer with a dispute not tied to an
 invoice is skipped; a buyer with an open promise not yet due, or an unchecked "I already paid"
@@ -35,7 +38,7 @@ from revert.channels.base import Channel, ChannelError
 from revert.core.models import Buyer, Company, Invoice, MessageLog, Reminder, ReminderPolicy
 from revert.core.outbox import PhoneNotAllowed, send_to_buyer
 from revert.core.timeutil import IST, format_ist
-from revert.verticals.collections.templates import ReminderLine, reminder_message
+from revert.verticals.collections.templates import ReminderLine, reminder_message, reminder_template
 
 log = logging.getLogger(__name__)
 
@@ -200,11 +203,16 @@ def _run_company(session: Session, channel: Channel, company: Company, now: date
             items=[ReminderLine(inv.number, inv.date, inv.due_date, inv.balance_paise) for inv, _ in items],
             as_of=as_of, synced_at_text=format_ist(company.last_synced_at),
         )
+        template = reminder_template(
+            company_name=company.name, buyer_name=buyer.ledger_name, language=buyer.language,
+            items=[ReminderLine(inv.number, inv.date, inv.due_date, inv.balance_paise) for inv, _ in items],
+            synced_at_text=format_ist(company.last_synced_at),
+        )
         meta = {"invoices": numbers, "stages": {inv.number: stage for inv, stage in items},
                 "balances_paise": {inv.number: inv.balance_paise for inv, _ in items}}
         try:
-            msg = send_to_buyer(session, channel, buyer, body, intent="payment_reminder",
-                                action=REMINDER_ACTION, outcome="sent", meta=meta, now_utc=now_utc)
+            msg = send_to_buyer(session, channel, buyer, body, intent="payment_reminder", action=REMINDER_ACTION,
+                                outcome="sent", meta=meta, now_utc=now_utc, template=template)
         except (ChannelError, PhoneNotAllowed) as e:  # raised before anything is logged or stored
             log.warning("reminder to %s failed: %s", buyer.ledger_name, e)
             note("failed", str(e))
