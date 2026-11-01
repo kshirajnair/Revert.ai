@@ -263,3 +263,66 @@ class Reminder(Base):
 
     invoice: Mapped[Invoice] = relationship()
     buyer: Mapped[Buyer] = relationship()
+
+
+class PaymentPromise(Base):
+    """One installment of a promise-to-pay ("50k now, rest on 15th" is two rows in one group).
+
+    kind: amount (dealer named a figure) | full (whole pending) | rest (whatever remains).
+    The promise is kept once receipts dated on/after `promised_on` reach `cumulative_paise`.
+    status: open | kept | broken | superseded
+    """
+
+    __tablename__ = "payment_promises"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    buyer_id: Mapped[int] = mapped_column(ForeignKey("buyers.id"), index=True)
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("message_log.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    amount_paise: Mapped[int] = mapped_column(Integer)
+    cumulative_paise: Mapped[int] = mapped_column(Integer)
+    due_date: Mapped[date] = mapped_column(Date, index=True)
+    promised_on: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(12), default="open")
+    followed_up_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    buyer: Mapped[Buyer] = relationship()
+
+
+class Dispute(Base):
+    """A dealer's complaint (wrong rate, short delivery...). Reminders stop for the invoice
+    (or for the whole buyer when no invoice was named) until the owner resolves it."""
+
+    __tablename__ = "disputes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    buyer_id: Mapped[int] = mapped_column(ForeignKey("buyers.id"), index=True)
+    invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("message_log.id"), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(10), default="open")  # open | resolved
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    buyer: Mapped[Buyer] = relationship()
+    invoice: Mapped[Invoice | None] = relationship()
+
+
+class PaymentClaim(Base):
+    """"I already paid" that the books don't show yet. Holds reminders for a few days while the
+    owner checks; matched automatically when a synced receipt carries the same reference."""
+
+    __tablename__ = "payment_claims"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
+    buyer_id: Mapped[int] = mapped_column(ForeignKey("buyers.id"), index=True)
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("message_log.id"), nullable=True)
+    reference: Mapped[str] = mapped_column(String(40), default="")  # UTR / UPI ref, if given
+    status: Mapped[str] = mapped_column(String(10), default="open")  # open | matched | closed
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    buyer: Mapped[Buyer] = relationship()

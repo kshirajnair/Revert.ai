@@ -2,13 +2,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from revert.core.ageing import BuyerAgeing, ageing_report
-from revert.core.models import Buyer, Invoice, MessageLog, Receipt, ReceiptAllocation, Reminder
+from revert.core.models import (
+    Buyer,
+    Dispute,
+    Invoice,
+    MessageLog,
+    PaymentClaim,
+    PaymentPromise,
+    Receipt,
+    ReceiptAllocation,
+    Reminder,
+)
 from revert.core.timeutil import to_ist
 
 
@@ -88,3 +98,42 @@ def month_totals(session: Session, company_id: int, as_of: date) -> MonthTotals:
         if first is not None and first <= rdate:
             recovered += alloc.amount_paise
     return MonthTotals(collected, recovered)
+
+
+# --- agent records (Phase 3) ----------------------------------------------------------------
+
+def promises_due(session: Session, company_id: int, as_of: date) -> list[PaymentPromise]:
+    """Open promise installments due today, then broken ones from the last two weeks."""
+    return list(session.scalars(
+        select(PaymentPromise).options(selectinload(PaymentPromise.buyer))
+        .where(PaymentPromise.company_id == company_id,
+               ((PaymentPromise.status == "open") & (PaymentPromise.due_date == as_of))
+               | ((PaymentPromise.status == "broken") & (PaymentPromise.due_date >= as_of - timedelta(days=14))))
+        .order_by(PaymentPromise.status.desc(), PaymentPromise.due_date)
+    ))
+
+
+def upcoming_promises(session: Session, company_id: int, as_of: date) -> list[PaymentPromise]:
+    return list(session.scalars(
+        select(PaymentPromise).options(selectinload(PaymentPromise.buyer))
+        .where(PaymentPromise.company_id == company_id, PaymentPromise.status == "open",
+               PaymentPromise.due_date > as_of).order_by(PaymentPromise.due_date)
+    ))
+
+
+def open_disputes(session: Session, company_id: int) -> list[Dispute]:
+    return list(session.scalars(
+        select(Dispute).options(selectinload(Dispute.buyer), selectinload(Dispute.invoice))
+        .where(Dispute.company_id == company_id, Dispute.status == "open").order_by(Dispute.created_at.desc())
+    ))
+
+
+def buyer_records(session: Session, buyer_id: int) -> dict:
+    return {
+        "promises": list(session.scalars(select(PaymentPromise).where(PaymentPromise.buyer_id == buyer_id)
+                                         .order_by(PaymentPromise.id.desc()).limit(20))),
+        "disputes": list(session.scalars(select(Dispute).options(selectinload(Dispute.invoice))
+                                         .where(Dispute.buyer_id == buyer_id).order_by(Dispute.id.desc()))),
+        "claims": list(session.scalars(select(PaymentClaim).where(PaymentClaim.buyer_id == buyer_id)
+                                       .order_by(PaymentClaim.id.desc()).limit(20))),
+    }

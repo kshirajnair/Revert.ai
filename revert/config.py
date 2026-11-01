@@ -24,6 +24,18 @@ class Settings:
     # background jobs inside `python -m revert serve`; 0 turns a job off
     sync_every_min: int = 15
     remind_every_min: int = 15
+    # gemini | claude | openai | rules. Without the matching key the agent uses rules (offline).
+    llm_provider: str = "gemini"
+    llm_model: str = ""  # blank = provider default
+    llm_timeout_s: float = 20
+    gemini_api_key: str = ""
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+
+    @property
+    def llm_api_key(self) -> str:
+        return {"gemini": self.gemini_api_key, "claude": self.anthropic_api_key,
+                "openai": self.openai_api_key}.get(self.llm_provider.lower(), "")
 
 
 def get_settings() -> Settings:
@@ -41,4 +53,10 @@ def get_settings() -> Settings:
         port=int(os.getenv("PORT", "8000")),
         sync_every_min=int(os.getenv("SYNC_EVERY_MIN", "15")),
         remind_every_min=int(os.getenv("REMIND_EVERY_MIN", "15")),
+        llm_provider=os.getenv("LLM_PROVIDER", "gemini"),
+        llm_model=os.getenv("LLM_MODEL", ""),
+        llm_timeout_s=float(os.getenv("LLM_TIMEOUT_S", "20")),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
     )

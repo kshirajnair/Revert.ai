@@ -1,4 +1,7 @@
+import os
 from datetime import date
+
+os.environ["LLM_PROVIDER"] = "rules"  # tests never call a real LLM
 
 import pytest
 

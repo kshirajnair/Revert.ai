@@ -1,1 +1,1 @@
-"""LLM provider abstraction, tool definitions, conversation handler (Phase 3)."""
+"""The AI agent: understands dealer messages and answers from the DB (see agent.py)."""

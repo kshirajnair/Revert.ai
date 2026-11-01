@@ -7,6 +7,7 @@
     pay     PARTY AMOUNT [--invoice INV-xxxx]   (mock only) record a payment in mock Tally
     remind  [--at "YYYY-MM-DD HH:MM"]           run the reminder engine once (optionally as if at an IST time)
     serve   [--offline] [--no-scheduler]        dashboard + chat simulator on http://127.0.0.1:8000
+    chat    DEALER MESSAGE                      message the AI agent as that dealer and print its reply
 """
 from __future__ import annotations
 
@@ -138,8 +139,30 @@ def cmd_remind(args) -> int:
     at = datetime.strptime(args.at, "%Y-%m-%d %H:%M").replace(tzinfo=IST) if args.at else None
     report = reminder_job(session, get_channel(get_settings().channel), at)
     print(f"Reminder run at {report.at:%d %b %Y %I:%M %p} IST: {report.summary()}")
+    if report.followups:
+        print(f"  Followed up on broken promises: {', '.join(report.followups)}")
     for r in report.results:
         print(f"  {r.status:<9}{r.buyer:<30}{', '.join(r.invoices)}{'  - ' + r.reason if r.reason else ''}")
+    return 0
+
+
+def cmd_chat(args) -> int:
+    from revert.channels import get_channel
+    from revert.core.conversation import receive_message
+    from revert.verticals.collections.handler import default_agent
+
+    session = _session()
+    _company(session)
+    matches = [b for b in session.scalars(select(Buyer)) if args.dealer.lower() in b.ledger_name.lower()]
+    if len(matches) != 1:
+        names = ", ".join(b.ledger_name for b in matches) or "none"
+        sys.exit(f"Name one dealer (matches: {names})")
+    b = matches[0]
+    if not b.primary_phone:
+        sys.exit(f"{b.ledger_name} has no phone number on file")
+    res = receive_message(session, get_channel(get_settings().channel), b.primary_phone, args.message)
+    print(f"[{res.inbound.intent} -> {res.inbound.action} -> {res.inbound.outcome}]  read by {default_agent().engine}")
+    print(res.reply.body if res.reply else "(no reply)")
     return 0
 
 
@@ -179,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("serve")
     p.add_argument("--offline", action="store_true", help="Sync now serves demo books in-process, no mock server needed")
     p.add_argument("--no-scheduler", action="store_true", help="don't run sync/reminders in the background")
+    p = sub.add_parser("chat")
+    p.add_argument("dealer", help="dealer name, or a unique part of it")
+    p.add_argument("message")
     args = ap.parse_args(argv)
     return {"seed": cmd_seed, "sync": cmd_sync, "ageing": cmd_ageing, "status": cmd_status, "pay": cmd_pay,
-            "remind": cmd_remind, "serve": cmd_serve}[args.cmd](args)
+            "remind": cmd_remind, "serve": cmd_serve, "chat": cmd_chat}[args.cmd](args)

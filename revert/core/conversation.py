@@ -26,7 +26,7 @@ def find_buyer_by_phone(session: Session, phone: str) -> Buyer | None:
 
 
 def receive_message(session: Session, channel: Channel, phone: str, body: str,
-                    now_utc: datetime | None = None) -> InboundResult:
+                    now_utc: datetime | None = None, agent=None) -> InboundResult:
     phone = normalize_phone(phone) or phone
     buyer = find_buyer_by_phone(session, phone)
     if buyer is None:
@@ -38,8 +38,9 @@ def receive_message(session: Session, channel: Channel, phone: str, body: str,
 
     inbound = log_inbound(session, channel, company_id=buyer.company_id, buyer=buyer, phone=phone, body=body,
                           now_utc=now_utc)
-    reply = handler.handle(session, buyer, inbound)
+    reply = handler.handle(session, buyer, inbound, agent=agent, now_utc=now_utc)
     inbound.intent, inbound.action, inbound.outcome = reply.intent, reply.action, reply.outcome
+    inbound.meta = reply.meta
     out = send_to_buyer(session, channel, buyer, reply.body, intent=reply.intent, action="auto_reply",
                         outcome="sent", meta={"in_reply_to": inbound.id}, phone=phone, now_utc=now_utc)
     session.commit()

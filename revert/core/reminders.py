@@ -12,6 +12,10 @@ default -3, 0, +7, +15, +30). On every run:
    dropped: no row is written, so the next run tries again.
 4. A sent message writes one `sent` Reminder row per invoice, so the stage never repeats.
 
+Agent holds (Phase 3): invoices under dispute are left out; a buyer with a dispute not tied to an
+invoice is skipped; a buyer with an open promise not yet due, or an unchecked "I already paid"
+from the last few days, is deferred.
+
 Stop on payment: after each sync, `on_payments_synced` marks the current stage of every invoice
 that received money as `cancelled`, so nothing is sent for it. A fully paid invoice has no
 balance and is never picked up again. A part-paid one resumes at its next stage.
@@ -26,6 +30,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from revert.agent.tools import holds_for
 from revert.channels.base import Channel, ChannelError
 from revert.core.models import Buyer, Company, Invoice, MessageLog, Reminder, ReminderPolicy
 from revert.core.outbox import PhoneNotAllowed, send_to_buyer
@@ -49,6 +54,7 @@ class BuyerResult:
 class RunReport:
     at: datetime  # IST
     results: list[BuyerResult] = field(default_factory=list)
+    followups: list[str] = field(default_factory=list)  # buyers sent a broken-promise follow-up
 
     def by_status(self, status: str) -> list[BuyerResult]:
         return [r for r in self.results if r.status == status]
@@ -60,6 +66,18 @@ class RunReport:
     def summary(self) -> str:
         counts = {s: len(self.by_status(s)) for s in ("sent", "deferred", "skipped", "failed")}
         return ", ".join(f"{n} {s}" for s, n in counts.items() if n) or "nothing due"
+
+    def reasons(self, max_names: int = 3) -> str:
+        """Why buyers were not sent to, one clause per reason: names when few, a count when many."""
+        grouped: dict[str, list[str]] = defaultdict(list)
+        for r in self.results:
+            if r.status != "sent":
+                grouped[r.reason].append(r.buyer)
+        parts = []
+        for reason, names in grouped.items():
+            who = ", ".join(names) if len(names) <= max_names else f"{len(names)} dealers"
+            parts.append(f"{reason[:1].upper()}{reason[1:]}: {who}")
+        return "; ".join(parts)
 
 
 def get_policy(session: Session, company_id: int) -> ReminderPolicy:
@@ -139,18 +157,33 @@ def _run_company(session: Session, channel: Channel, company: Company, now: date
         select(Buyer).where(Buyer.id.in_(pending)).options(selectinload(Buyer.phones))
     )}
     quiet = in_quiet_hours(now, policy)
+    holds = holds_for(session, company.id, as_of, now_utc)
     for buyer_id, items in sorted(pending.items(), key=lambda kv: buyers[kv[0]].ledger_name):
         buyer = buyers[buyer_id]
-        numbers = [inv.number for inv, _ in items]
+        disputed = [inv.number for inv, _ in items if inv.id in holds["dispute_invoices"]]
+        items = [(inv, stage) for inv, stage in items if inv.id not in holds["dispute_invoices"]]
+        numbers = [inv.number for inv, _ in items] or disputed
 
         def note(status: str, reason: str = "") -> None:
             report.results.append(BuyerResult(buyer.ledger_name, numbers, status, reason))
 
+        if not items:
+            note("skipped", "invoice under dispute")
+            continue
         if not policy.enabled:
             note("skipped", "reminders are switched off")
             continue
         if buyer.paused:
-            note("skipped", "paused by owner")
+            note("skipped", "paused")
+            continue
+        if buyer.id in holds["dispute_buyers"]:
+            note("skipped", "dispute open")
+            continue
+        if buyer.id in holds["promise"]:
+            note("deferred", "promised to pay")
+            continue
+        if buyer.id in holds["claim"]:
+            note("deferred", "says already paid, being checked")
             continue
         if quiet:
             note("deferred", f"quiet hours ({policy.quiet_start_hour:02d}:00-{policy.quiet_end_hour:02d}:00 IST)")

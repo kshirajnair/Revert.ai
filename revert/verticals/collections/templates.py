@@ -6,7 +6,7 @@ Rules these templates follow (and tests check):
   and every message with money ends with the data's last-synced time;
 - no threats and no mention of legal action, in any tone.
 
-English only for now. Hindi and Kannada replies arrive with the agent in Phase 3.
+Reminders are English only for now. Agent replies (replies.py) come in English, Hindi and Kannada.
 """
 from __future__ import annotations
 

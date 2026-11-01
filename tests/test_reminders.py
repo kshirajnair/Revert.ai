@@ -165,7 +165,7 @@ def test_paused_buyer_gets_nothing_until_unpaused(session, company, channel):
     b.paused = True
     session.commit()
     report = run_reminders(session, channel, at(D, 10))
-    assert report.results[0].status == "skipped" and report.results[0].reason == "paused by owner"
+    assert report.results[0].status == "skipped" and report.results[0].reason == "paused"
     assert sent_messages(session) == []
 
     b.paused = False

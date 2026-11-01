@@ -29,12 +29,13 @@ from revert.core.ageing import buyer_ageing
 from revert.core.conversation import receive_message
 from revert.core.db import init_db, make_engine, make_session_factory
 from revert.core.jobs import reminder_job, sync_job
-from revert.core.models import TONES, Buyer, Company, MessageLog, Reminder
+from revert.core.models import TONES, Buyer, Company, Dispute, MessageLog, PaymentClaim, Reminder
 from revert.core.money import format_inr, format_inr_exact
 from revert.core.outbox import send_to_buyer
 from revert.core.reminders import get_policy, in_quiet_hours
-from revert.core.timeutil import IST, format_ist, now_ist, to_ist, today_ist
+from revert.core.timeutil import IST, format_ist, now_ist, to_ist, today_ist, utcnow
 from revert.dashboard import queries
+from revert.verticals.collections.handler import default_agent
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
@@ -48,7 +49,7 @@ templates.env.filters["ist_short"] = lambda dt: to_ist(dt).strftime("%d %b, %I:%
 
 def create_app(settings: Settings | None = None, session_factory: sessionmaker | None = None,
                connector: Connector | None = None, channel: Channel | None = None,
-               offline: bool = False, scheduler: bool = True) -> FastAPI:
+               offline: bool = False, scheduler: bool = True, agent=None) -> FastAPI:
     settings = settings or get_settings()
     if session_factory is None:
         engine = make_engine(settings.database_url)
@@ -68,6 +69,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker |
     app.state.session_factory = session_factory
     app.state.connector = connector
     app.state.channel = channel
+    app.state.agent = agent or default_agent()
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     _routes(app)
     return app
@@ -147,6 +149,10 @@ def _routes(app: FastAPI) -> None:
             needs=queries.needs_owner(db, company.id),
             convos=queries.recent_conversations(db, company.id),
             quiet_now=in_quiet_hours(now_ist(), policy), policy=policy,
+            promises=queries.promises_due(db, company.id, as_of),
+            upcoming=queries.upcoming_promises(db, company.id, as_of),
+            disputes=queries.open_disputes(db, company.id),
+            engine=request.app.state.agent.engine,
         )
 
     @app.post("/actions/sync")
@@ -161,9 +167,10 @@ def _routes(app: FastAPI) -> None:
     @app.post("/actions/remind")
     def action_remind(request: Request, at: str = Form(""), db: Session = Depends(get_db)):
         report = reminder_job(db, request.app.state.channel, _parse_at(at))
-        details = "; ".join(f"{r.buyer}: {r.reason}" for r in report.results if r.status != "sent")
+        details = report.reasons()
         when = f" (as if at {report.at:%d %b %I:%M %p} IST)" if at.strip() else ""
-        return _back("/", f"Reminder run{when}: {report.summary()}." + (f" {details}" if details else ""))
+        followed = f" Followed up on broken promises: {', '.join(report.followups)}." if report.followups else ""
+        return _back("/", f"Reminder run{when}: {report.summary()}." + (f" {details}." if details else "") + followed)
 
     @app.get("/buyers/{buyer_id}", response_class=HTMLResponse)
     def buyer_page(request: Request, buyer_id: int, db: Session = Depends(get_db)):
@@ -175,7 +182,7 @@ def _routes(app: FastAPI) -> None:
                                .options(selectinload(Reminder.invoice)).order_by(Reminder.id.desc())).all()
         return page(request, "buyer.html", buyer=buyer, company=buyer.company, tones=TONES,
                     ageing=buyer_ageing(buyer, today_ist()), reminders=reminders,
-                    messages=queries.thread(db, buyer_id))
+                    messages=queries.thread(db, buyer_id), **queries.buyer_records(db, buyer_id))
 
     @app.post("/buyers/{buyer_id}/tone", response_class=HTMLResponse)
     def set_tone(buyer_id: int, tone: str = Form(...), db: Session = Depends(get_db)):
@@ -211,6 +218,24 @@ def _routes(app: FastAPI) -> None:
         m.outcome = "owner_handled"
         db.commit()
         return _back("/", "Marked as handled.")
+
+    @app.post("/disputes/{dispute_id}/resolve")
+    def resolve_dispute(request: Request, dispute_id: int, back: str = Form("/"), db: Session = Depends(get_db)):
+        d = db.get(Dispute, dispute_id)
+        if d is None:
+            raise HTTPException(404, "No such dispute")
+        d.status, d.resolved_at = "resolved", utcnow()
+        db.commit()
+        return _back(back if back.startswith("/") else "/", "Dispute resolved. Reminders resume on the normal schedule.")
+
+    @app.post("/claims/{claim_id}/close")
+    def close_claim(request: Request, claim_id: int, back: str = Form("/"), db: Session = Depends(get_db)):
+        c = db.get(PaymentClaim, claim_id)
+        if c is None:
+            raise HTTPException(404, "No such claim")
+        c.status = "closed"
+        db.commit()
+        return _back(back if back.startswith("/") else "/", "Payment claim closed.")
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request, db: Session = Depends(get_db)):
@@ -262,7 +287,8 @@ def _routes(app: FastAPI) -> None:
                        db: Session = Depends(get_db)):
         b = _buyer(db, buyer_id)
         if text.strip():
-            receive_message(db, request.app.state.channel, b.primary_phone or "", text.strip())
+            receive_message(db, request.app.state.channel, b.primary_phone or "", text.strip(),
+                            agent=request.app.state.agent)
         return page(request, "_thread.html", current=b, company=b.company, messages=queries.thread(db, buyer_id))
 
     @app.get("/healthz")

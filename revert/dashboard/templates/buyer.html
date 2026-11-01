@@ -61,6 +61,31 @@
   </form>
 </section>
 
+{% if promises or disputes or claims %}
+<section class="card">
+  <h2>Promises, disputes and payment claims</h2>
+  <ul class="list">
+    {% for d in disputes %}
+    <li><div><strong>Dispute</strong> <span class="tag">{{ d.invoice.number if d.invoice else "all invoices" }}</span>
+        <small class="muted">“{{ d.reason[:160] }}” · {{ d.created_at | ist_short }}</small></div>
+      {% if d.status == "open" %}
+      <form method="post" action="/disputes/{{ d.id }}/resolve"><input type="hidden" name="back" value="/buyers/{{ buyer.id }}"><button class="ghost">Resolve</button></form>
+      {% else %}<span class="tag ok">resolved</span>{% endif %}</li>
+    {% endfor %}
+    {% for p in promises %}
+    <li><div><strong>Promise</strong> <small class="muted">{{ p.amount_paise | inr_exact }} by {{ p.due_date.strftime("%d %b %Y") }} ({{ p.kind }}) · made {{ p.promised_on.strftime("%d %b") }}</small></div>
+      <span class="tag {% if p.status == 'kept' %}ok{% elif p.status == 'broken' %}bad{% endif %}">{{ p.status }}</span></li>
+    {% endfor %}
+    {% for c in claims %}
+    <li><div><strong>Says already paid</strong> <small class="muted">{{ ("ref " ~ c.reference) if c.reference else "no reference yet" }} · {{ c.created_at | ist_short }}</small></div>
+      {% if c.status == "open" %}
+      <form method="post" action="/claims/{{ c.id }}/close"><input type="hidden" name="back" value="/buyers/{{ buyer.id }}"><button class="ghost">Close</button></form>
+      {% else %}<span class="tag ok">{{ c.status }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <section class="card">
   <h2>Reminder history</h2>
   <ul class="list">

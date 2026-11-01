@@ -1,28 +1,27 @@
-"""Inbound message handler for the collections vertical.
+"""Inbound message handler for the collections vertical: the AI agent in `revert/agent`.
 
-Phase 2: every message is handed to the owner with a polite acknowledgement.
-Phase 3 replaces `handle` with the AI agent (intents, tools, promises, disputes).
+The agent is built once from settings (LLM_PROVIDER + key, or offline rules). Callers such as
+the dashboard or tests can pass their own `Agent`.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import datetime
+from functools import lru_cache
 
+from revert.agent.agent import Agent, Reply
+from revert.agent.llm import get_llm
+from revert.config import get_settings
 from revert.core.models import Buyer, MessageLog
-from revert.verticals.collections.templates import handoff_reply
+
+__all__ = ["Reply", "default_agent", "handle"]
 
 
-@dataclass(frozen=True)
-class Reply:
-    body: str
-    intent: str  # what the buyer wanted
-    action: str  # what Revert did about it
-    outcome: str  # state of the inbound message afterwards
+@lru_cache(maxsize=1)
+def default_agent() -> Agent:
+    s = get_settings()
+    return Agent(get_llm(s.llm_provider, s.llm_api_key, s.llm_model, s.llm_timeout_s))
 
 
-def handle(session, buyer: Buyer, inbound: MessageLog) -> Reply:
-    return Reply(
-        body=handoff_reply(company_name=buyer.company.name, buyer_name=buyer.ledger_name),
-        intent="unclassified",
-        action="handoff_owner",
-        outcome="awaiting_owner",
-    )
+def handle(session, buyer: Buyer, inbound: MessageLog, agent: Agent | None = None,
+           now_utc: datetime | None = None) -> Reply:
+    return (agent or default_agent()).handle(session, buyer, inbound, now_utc=now_utc)

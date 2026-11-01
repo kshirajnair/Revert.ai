@@ -39,7 +39,7 @@
       <div>
         <a href="/buyers/{{ m.buyer_id }}" target="_top"><strong>{{ m.buyer.ledger_name if m.buyer else m.phone }}</strong></a>
         <span>“{{ m.body[:140] }}”</span>
-        <small class="muted">{{ m.created_at | ist_short }}</small>
+        <small class="muted">{{ m.created_at | ist_short }} · {{ m.intent | replace("_", " ") }} · {{ m.action | replace("_", " ") }}</small>
       </div>
       <div class="row-actions">
         <a class="btn" href="/buyers/{{ m.buyer_id }}" target="_top">Reply</a>
@@ -50,6 +50,54 @@
   </ul>
 </section>
 {% endif %}
+
+<div class="pair">
+<section class="card">
+  <h2>Promises due today</h2>
+  <ul class="list">
+    {% for p in promises %}
+    <li>
+      <div>
+        <a href="/buyers/{{ p.buyer_id }}" target="_top"><strong>{{ p.buyer.ledger_name }}</strong></a>
+        <small class="muted">{{ p.amount_paise | inr_exact }} by {{ p.due_date.strftime("%d %b") }}{% if p.kind != "amount" %} ({{ p.kind }}){% endif %}</small>
+      </div>
+      <span class="tag {% if p.status == 'broken' %}bad{% endif %}">{{ "due today" if p.status == "open" else ("broken, followed up" if p.followed_up_at else "broken") }}</span>
+    </li>
+    {% else %}
+    <li class="muted">No promises due today.</li>
+    {% endfor %}
+  </ul>
+  {% if upcoming %}
+  <details class="small"><summary>{{ upcoming | length }} upcoming</summary>
+    <ul class="list">
+      {% for p in upcoming %}
+      <li><div><a href="/buyers/{{ p.buyer_id }}" target="_top">{{ p.buyer.ledger_name }}</a>
+        <small class="muted">{{ p.amount_paise | inr_exact }} by {{ p.due_date.strftime("%d %b") }}</small></div></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Disputes</h2>
+  <ul class="list">
+    {% for d in disputes %}
+    <li>
+      <div>
+        <a href="/buyers/{{ d.buyer_id }}" target="_top"><strong>{{ d.buyer.ledger_name }}</strong></a>
+        <span class="tag">{{ d.invoice.number if d.invoice else "all invoices" }}</span>
+        <small class="muted">“{{ d.reason[:120] }}” · {{ d.created_at | ist_short }}</small>
+      </div>
+      <form method="post" action="/disputes/{{ d.id }}/resolve"><button class="ghost">Resolve</button></form>
+    </li>
+    {% else %}
+    <li class="muted">No open disputes.</li>
+    {% endfor %}
+  </ul>
+  <p class="muted small">Reminders stay off for a disputed invoice until you resolve it.</p>
+</section>
+</div>
 
 <section class="card">
   <h2>Overdue, most days late first</h2>
@@ -102,5 +150,5 @@
     {% endfor %}
   </ul>
 </section>
-<p class="muted small">Promises to pay and disputes appear here once the AI agent lands in Phase 3.</p>
+<p class="muted small">Dealer messages are read by: {{ engine }}. Replies quote only figures from your books.</p>
 {% endblock %}
